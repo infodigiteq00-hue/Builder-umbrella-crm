@@ -3505,7 +3505,7 @@ function lfRenderPanel() {
     section('Property they want', multi('types', LF_TYPES), text('typeText', 'Something else, e.g. penthouse')),
     section('Area', text('area', 'e.g. Thane West')),
     section('Budget', el('div', { class: 'prop-filter-pair lf-budget' }, [moneyInput('bmin', 'From, e.g. 65 L'), el('span', { class: 'muted', text: 'to' }), moneyInput('bmax', 'To, e.g. 1.2 Cr')]),
-      el('p', { class: 'muted', text: 'Matches anyone whose budget overlaps this range. Leads with no budget are left out.' })),
+      el('p', { class: 'muted', text: 'Matches anyone whose budget range overlaps this range (touching at one figure does not count). Leads with no budget are left out.' })),
     section('Project they asked about', projectSelect()),
     section('When it came in',
       el('div', { class: 'pill-picker' }, LF_WHEN.map(([v, label]) => pill(label, $('f-when').value === v, () => {

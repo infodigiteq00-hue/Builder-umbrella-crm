@@ -1240,8 +1240,10 @@ async function handleListLeads(request, env, actor) {
     binds.push(researchLevel);
     filters.push(`l.research_level = ?${binds.length}`);
   }
-  // Budget overlap: the lead's range [min|max, max|min] must touch the asked
-  // range. A lead with no budget never matches once any budget bound is set.
+  // Budget overlap: the lead's budget range must overlap the asked range. Ranges that only touch at one number do
+  // NOT overlap (50 L – 1 Cr is not in 1 Cr – 5 Cr), unless one side is a single figure (min = max) or the asked range
+  // is a single figure. A lead with only an upper limit counts from 0, one with only a lower limit has no upper end.
+  // A lead with no budget never matches once any budget bound is set.
   const budgetBounds = {};
   for (const key of ['budget_min', 'budget_max']) {
     const raw = url.searchParams.get(key)?.trim();
@@ -1251,9 +1253,19 @@ async function handleListLeads(request, env, actor) {
     budgetBounds[key] = n;
   }
   if (budgetBounds.budget_min != null || budgetBounds.budget_max != null) {
+    const lo = 'CASE WHEN l.budget_min IS NULL THEN 0 ELSE l.budget_min END';
+    const hi = 'COALESCE(l.budget_max, 9007199254740991)';
+    const point = 'l.budget_min IS NOT NULL AND l.budget_min = l.budget_max';
+    const askedPoint = budgetBounds.budget_min != null && budgetBounds.budget_min === budgetBounds.budget_max;
     filters.push('COALESCE(l.budget_min, l.budget_max) IS NOT NULL');
-    if (budgetBounds.budget_max != null) { binds.push(budgetBounds.budget_max); filters.push(`COALESCE(l.budget_min, l.budget_max) <= ?${binds.length}`); }
-    if (budgetBounds.budget_min != null) { binds.push(budgetBounds.budget_min); filters.push(`COALESCE(l.budget_max, l.budget_min) >= ?${binds.length}`); }
+    if (budgetBounds.budget_max != null) {
+      binds.push(budgetBounds.budget_max);
+      filters.push(askedPoint ? `${lo} <= ?${binds.length}` : `(${lo} < ?${binds.length} OR (${lo} = ?${binds.length} AND ${point}))`);
+    }
+    if (budgetBounds.budget_min != null) {
+      binds.push(budgetBounds.budget_min);
+      filters.push(askedPoint ? `${hi} >= ?${binds.length}` : `(${hi} > ?${binds.length} OR (${hi} = ?${binds.length} AND ${point}))`);
+    }
   }
   const extraLeadFilter = leadExtraFilters(url, filters, binds);
   if (extraLeadFilter) return extraLeadFilter;
