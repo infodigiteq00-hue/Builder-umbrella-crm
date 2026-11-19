@@ -11284,7 +11284,9 @@ async function openLead(id) {
     progress.append(track);
   }
   const stageSel = el('select', { attrs: { 'aria-label': 'Move to' } });
-  STAGE_ORDER.forEach((v) => { const o = el('option', { text: STAGE_LABEL[v], attrs: { value: v } }); o.selected = v === lead.stage; stageSel.append(o); });
+  // "Spoke to them" and "Keep warm for later" are not offered as places to move a lead (a lead already there keeps showing it).
+  const HIDDEN_MOVE_STAGES = ['contacted', 'nurture'];
+  STAGE_ORDER.filter((v) => !HIDDEN_MOVE_STAGES.includes(v) || v === lead.stage).forEach((v) => { const o = el('option', { text: STAGE_LABEL[v], attrs: { value: v } }); o.selected = v === lead.stage; stageSel.append(o); });
   const followUp = el('input', { attrs: { type: 'datetime-local', lang: 'en-IN', step: '60', 'aria-label': 'Remind me to call again', value: toLocalInputValue(lead.next_follow_up_at) } });
   const prioritySel = el('select', { attrs: { 'aria-label': 'Priority' } });
   for (const [v, label] of [['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']]) {
