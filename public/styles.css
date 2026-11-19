@@ -3594,3 +3594,5 @@ td > .pill + .lss-pill { margin-left: 6px; }
 .br-custom input { flex: 1 1 0; min-width: 0; }
 #budget-rules .rule-row { flex-wrap: wrap; gap: 8px; }
 @media (max-width: 720px) { .br-form { padding: 0 16px 12px; } .br-row select, .br-row .btn { flex: 1 1 100%; } }
+.br-label { margin: 10px 0 6px; font-size: 13px; }
+.br-ranges { margin-bottom: 4px; }

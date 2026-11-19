@@ -165,7 +165,7 @@ const ROLE_PERMISSIONS = {
     'hunting.read_own', 'hunting.create', 'hunting.update_own', 'handover.submit', 'visit.write'],
   viewer: ['lead.read_all', 'team.read', 'hunting.read_all', 'transaction.read'],
 };
-ROLE_PERMISSIONS.sales_employee = ROLE_PERMISSIONS.agent; // same permissions as Employee
+ROLE_PERMISSIONS.sales_employee = ROLE_PERMISSIONS.agent.filter((p) => p !== 'lead.create'); // like Employee, but cannot add leads by hand
 // Roles that lead a team (team-scoped reassignment, team rollups).
 const TEAM_HEAD_ROLES = ['manager', 'team_leader'];
 const TEAM_VERTICALS = ['presales', 'client', 'hunting', 'postsales']; // teams.vertical (0060)

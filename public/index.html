@@ -606,7 +606,7 @@ Properties</span></div>
                 <label class="field">What they can do
                   <select id="ct-emp-role">
                     <option value="agent">Employee — own leads; can add leads and hunting targets</option>
-                <option value="sales_employee">Sales Employee — own leads; can add leads and hunting targets</option>
+                <option value="sales_employee">Sales Employee — own leads; cannot add leads</option>
                     <option value="team_leader">Team Leader — their team's daily work</option>
                     <option value="manager">Manager — their whole team</option>
                     <option value="sales_head">Sales Head — the whole sales department</option>
@@ -665,7 +665,7 @@ Properties</span></div>
             <label class="field">What they can do
               <select id="emp-role">
                 <option value="agent">Employee — own leads; can add leads and hunting targets</option>
-                <option value="sales_employee">Sales Employee — own leads; can add leads and hunting targets</option>
+                <option value="sales_employee">Sales Employee — own leads; cannot add leads</option>
                 <option value="team_leader">Team Leader — their team's daily work</option>
                 <option value="manager">Manager — their whole team</option>
                 <option value="sales_head">Sales Head — the whole sales department</option>
@@ -1583,12 +1583,12 @@ const ROLE_OPTION_LABEL = { agent: 'Agent — only their own leads', manager: 'M
   sales_head: 'Sales Head — the whole sales department', team_leader: "Team Leader — their team's daily work",
   inventory_approver: 'Inventory Approver — properties, prices and which team sells them', transaction_coordinator: 'Transaction Coordinator — deals, NOCs and paperwork',
   legal: 'Legal — checks and approves deal documents', finance: 'Finance — brokerage, invoices and payouts',
-  sales_employee: 'Sales Employee — their own leads; can add leads and hunting properties' };
+  sales_employee: 'Sales Employee — their own leads; cannot add leads' };
 const ROLE_BLURB = { agent: 'Own leads; can add leads and hunting properties', manager: 'Can see the whole team', admin: 'Can see and change everything', viewer: 'Can look, cannot change anything',
   sales_head: 'All sales leads, clients and team results; sets targets', team_leader: "Own team's leads and tasks; can pass work within the team",
   inventory_approver: 'Properties, prices and which team sells them', transaction_coordinator: 'Deals after booking: NOCs, legal and bank tasks, documents',
   legal: 'Legal documents of deals; reviews and approves them', finance: 'Brokerage, invoices, receipts, expenses and payouts',
-  sales_employee: 'Own leads; can add leads and hunting properties' };
+  sales_employee: 'Own leads only; cannot add leads' };
 const ROLE_SHORT = { super_admin: 'Super administrator', agent: 'Employee', manager: 'Manager', admin: 'Administrator', viewer: 'Viewer',
   sales_head: 'Sales Head', team_leader: 'Team Leader', inventory_approver: 'Inventory Approver', transaction_coordinator: 'Transaction Coordinator', legal: 'Legal', finance: 'Finance', sales_employee: 'Sales Employee' };
 // People screen order (0060): the sales ladder, then the specialist roles.
@@ -5202,28 +5202,49 @@ async function renderBudgetRules() {
   if (canEdit) {
     const agents = (USERS || []).filter((u) => isAgentRole(u.role) && u.is_active && u.team_id);
     const who = el('select', { attrs: { 'aria-label': 'Employee' } }, [el('option', { text: agents.length ? 'Choose an employee…' : 'No employee in a team yet', attrs: { value: '' } }), ...agents.map((u) => el('option', { text: `${u.name}${u.team_name ? ' — ' + u.team_name : ''}`, attrs: { value: u.id } }))]);
-    const preset = el('select', { attrs: { 'aria-label': 'Budget range' } }, [...BR_PRESETS.map(([label], i) => el('option', { text: label, attrs: { value: String(i) } })), el('option', { text: 'Custom range…', attrs: { value: 'custom' } })]);
+    // Budget ranges are multi-select: tick as many as you like; one rule is created per range.
+    const picked = new Set();
+    let customOn = false;
+    const ranges = el('div', { class: 'pill-picker br-ranges', attrs: { role: 'group', 'aria-label': 'Budget ranges' } });
+    const drawRanges = () => ranges.replaceChildren(
+      ...BR_PRESETS.map(([label], i) => {
+        const b = el('button', { text: label, attrs: { type: 'button', 'aria-pressed': String(picked.has(i)) } });
+        b.classList.toggle('picked', picked.has(i));
+        b.addEventListener('click', () => { picked.has(i) ? picked.delete(i) : picked.add(i); drawRanges(); });
+        return b;
+      }),
+      (() => {
+        const b = el('button', { text: 'Custom range…', attrs: { type: 'button', 'aria-pressed': String(customOn) } });
+        b.classList.toggle('picked', customOn);
+        b.addEventListener('click', () => { customOn = !customOn; custom.hidden = !customOn; drawRanges(); });
+        return b;
+      })(),
+    );
     const from = el('input', { attrs: { type: 'number', min: '0', step: '0.01', placeholder: 'From (₹ Cr)', 'aria-label': 'Budget from, in crore rupees' } });
     const to = el('input', { attrs: { type: 'number', min: '0', step: '0.01', placeholder: 'To (₹ Cr)', 'aria-label': 'Budget up to, in crore rupees' } });
     const custom = el('div', { class: 'br-custom', attrs: { hidden: '' } }, [from, to]);
     const proj = el('select', { attrs: { 'aria-label': 'Project' } }, [el('option', { text: 'Any project', attrs: { value: '' } }), ...projRes.projects.map((p) => el('option', { text: p.name, attrs: { value: p.name } }))]);
     const err = el('p', { class: 'err', attrs: { role: 'alert' } });
     const add = el('button', { class: 'btn btn-primary', text: 'Add rule', attrs: { type: 'button' } });
-    preset.addEventListener('change', () => { custom.hidden = preset.value !== 'custom'; });
+    drawRanges();
     add.addEventListener('click', async () => {
       err.textContent = '';
-      let min, max;
-      if (preset.value === 'custom') { min = from.value === '' ? null : Math.round(Number(from.value) * CR_RUPEES); max = to.value === '' ? null : Math.round(Number(to.value) * CR_RUPEES); }
-      else { [, min, max] = BR_PRESETS[Number(preset.value)]; }
+      const list = [...picked].sort((a, b) => a - b).map((i) => [BR_PRESETS[i][1], BR_PRESETS[i][2]]);
+      if (customOn) list.push([from.value === '' ? null : Math.round(Number(from.value) * CR_RUPEES), to.value === '' ? null : Math.round(Number(to.value) * CR_RUPEES)]);
       if (!who.value) { err.textContent = 'Choose the employee who should get these leads.'; return; }
+      if (!list.length) { err.textContent = 'Tick at least one budget range.'; return; }
       add.disabled = true;
+      let made = 0;
       try {
-        await api('/api/budget-rules', { method: 'POST', body: JSON.stringify({ user_id: who.value, budget_min: min, budget_max: max, project: proj.value || null }) });
-        showToast('Rule added', 'New leads in that budget will be suggested to this employee.');
-        await renderBudgetRules();
-      } catch (e) { err.textContent = e.message; add.disabled = false; }
+        for (const [min, max] of list) {
+          await api('/api/budget-rules', { method: 'POST', body: JSON.stringify({ user_id: who.value, budget_min: min, budget_max: max, project: proj.value || null }) });
+          made++;
+        }
+        showToast(made === 1 ? 'Rule added' : made + ' rules added', 'New leads in ' + (made === 1 ? 'that budget' : 'those budgets') + ' will be suggested to this employee.');
+      } catch (e) { err.textContent = (made ? made + ' added, then: ' : '') + e.message; }
+      await renderBudgetRules();
     });
-    form.replaceChildren(el('div', { class: 'f-project-row br-row' }, [who, preset, proj, add]), custom, err);
+    form.replaceChildren(el('div', { class: 'f-project-row br-row' }, [who, proj, add]), el('div', { class: 'muted br-label', text: 'Budget ranges — tick one or more' }), ranges, custom, err);
   }
   const box = $('budget-rules');
   box.replaceChildren(...(rules.length ? rules.map((r) => {
