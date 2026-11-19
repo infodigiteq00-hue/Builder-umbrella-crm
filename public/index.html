@@ -3427,9 +3427,32 @@ function lfOpenPanel(open) {
   if (open) { lfRenderPanel(); lfLabel(); $('view-leads').scrollIntoView({ block: 'start' }); }
 }
 
+// Every project: the Projects catalogue plus any project name a lead asked about (website leads can name one that is not catalogued).
+let LF_PROJECT_NAMES = null;
+async function lfProjectNames() {
+  if (LF_PROJECT_NAMES) return LF_PROJECT_NAMES;
+  const [cat, asked] = await Promise.all([api('/api/projects').catch(() => ({ projects: [] })), api('/api/leads/projects').catch(() => ({ projects: [] }))]);
+  const seen = new Map();
+  for (const n of [...(cat.projects || []).map((p) => p.name), ...(asked.projects || []).map((p) => p.name)]) if (n && !seen.has(n.trim().toLowerCase())) seen.set(n.trim().toLowerCase(), n.trim());
+  LF_PROJECT_NAMES = [...seen.values()].sort((x, y) => x.localeCompare(y));
+  setTimeout(() => { LF_PROJECT_NAMES = null; }, 60000); // refresh the list now and then
+  return LF_PROJECT_NAMES;
+}
 function lfRenderPanel() {
   lfPullBar();
   const refresh = () => lfChanged();
+  const projectSelect = () => {
+    const sel = el('select', { attrs: { 'aria-label': 'Project they asked about' } }, [el('option', { text: 'Any project', attrs: { value: '' } })]);
+    const fill = (names) => {
+      sel.replaceChildren(el('option', { text: 'Any project', attrs: { value: '' } }), ...names.map((n) => el('option', { text: n, attrs: { value: n } })));
+      if (LF.project && !names.some((n) => n.toLowerCase() === LF.project.trim().toLowerCase())) sel.append(el('option', { text: LF.project, attrs: { value: LF.project } }));
+      sel.value = LF.project || '';
+    };
+    fill([]);
+    lfProjectNames().then(fill).catch(() => {});
+    sel.addEventListener('change', () => { LF.project = sel.value; refresh(); });
+    return sel;
+  };
   const section = (title, ...kids) => el('div', { class: 'prop-filter-section' }, [el('h4', { text: title }), ...kids]);
   const pill = (label, on, onClick) => {
     const btn = el('button', { text: label, attrs: { type: 'button', 'aria-pressed': String(on) } });
@@ -3477,7 +3500,7 @@ function lfRenderPanel() {
     section('Area', text('area', 'e.g. Thane West')),
     section('Budget', el('div', { class: 'prop-filter-pair lf-budget' }, [moneyInput('bmin', 'From, e.g. 65 L'), el('span', { class: 'muted', text: 'to' }), moneyInput('bmax', 'To, e.g. 1.2 Cr')]),
       el('p', { class: 'muted', text: 'Matches anyone whose budget overlaps this range. Leads with no budget are left out.' })),
-    section('Project they asked about', text('project', 'Project or property name')),
+    section('Project they asked about', projectSelect()),
     section('When it came in',
       el('div', { class: 'pill-picker' }, LF_WHEN.map(([v, label]) => pill(label, $('f-when').value === v, () => {
         $('f-when').value = v; $('f-from').value = ''; $('f-to').value = ''; refresh();
