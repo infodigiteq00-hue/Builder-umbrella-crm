@@ -3596,3 +3596,11 @@ td > .pill + .lss-pill { margin-left: 6px; }
 @media (max-width: 720px) { .br-form { padding: 0 16px 12px; } .br-row select, .br-row .btn { flex: 1 1 100%; } }
 .br-label { margin: 10px 0 6px; font-size: 13px; }
 .br-ranges { margin-bottom: 4px; }
+
+/* Auto-assign: manager approval switch */
+.approval-switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.switch { flex: none; width: 52px; height: 30px; padding: 3px; border: 0; border-radius: 999px; background: #C7CCD6; cursor: pointer; transition: background .2s ease; }
+.switch span { display: block; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .25s var(--spring-smooth, ease); }
+.switch.on { background: var(--accent, #4f46e5); }
+.switch.on span { transform: translateX(22px); }
+.switch:disabled { opacity: .6; cursor: default; }

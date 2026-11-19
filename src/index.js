@@ -107,6 +107,7 @@ function parseCount(value) {
 const DEFAULT_WORKSPACE_SETTINGS = {
   business_name: 'Atlantic Properties',
   workspace_name: 'Atlantic Properties',
+  auto_assign_approval: 'off', // 'on' = a manager approves each automatic assignment; 'off' = the suggested person gets the lead straight away
   welcome_text: 'Keep every customer enquiry, property and follow-up in one clear place.',
   brochure_contact_name: '',
   brochure_contact_person: '',
@@ -744,8 +745,36 @@ async function handleIntake(request, env, source) {
   }
 
   await applyBudgetRule(env, id).catch((e) => console.error('budget rule failed', e));
+  await autoApprovePending(env, id).catch((e) => console.error('auto-assign failed', e));
   const saved = await env.DB.prepare('SELECT assigned_user_id, team_id FROM leads WHERE id = ?1').bind(id).first();
   return json({ ok: true, lead_id: id, ...saved });
+}
+
+// ---- Manager approval for automatic assignment can be switched off (Auto-assign page, setting auto_assign_approval) ----
+// When it is off, a suggested person is given the lead straight away: the pending approval is closed as approved by the system.
+async function approvalRequired(env) {
+  const row = await env.DB.prepare("SELECT value FROM workspace_settings WHERE key = 'auto_assign_approval'").first().catch(() => null);
+  return (row?.value ?? DEFAULT_WORKSPACE_SETTINGS.auto_assign_approval) === 'on';
+}
+async function autoApprovePending(env, leadId = null) {
+  if (await approvalRequired(env)) return 0;
+  const { results } = await env.DB.prepare(
+    `SELECT a.id, a.lead_id, a.recommended_user_id, u.team_id AS user_team_id
+       FROM assignment_approvals a JOIN users u ON u.id = a.recommended_user_id AND u.is_active = 1
+       JOIN leads l ON l.id = a.lead_id AND l.assigned_user_id IS NULL
+      WHERE a.status = 'pending' ${leadId ? 'AND a.lead_id = ?1' : ''} LIMIT 500`
+  ).bind(...(leadId ? [leadId] : [])).all();
+  let done = 0;
+  for (const a of results ?? []) {
+    const closed = await env.DB.prepare("UPDATE assignment_approvals SET status = 'approved', final_user_id = ?2, note = 'Automatic: manager approval is switched off', reviewed_at = datetime('now') WHERE id = ?1 AND status = 'pending'").bind(a.id, a.recommended_user_id).run();
+    if (!closed.meta.changes) continue;
+    await env.DB.batch([
+      env.DB.prepare("UPDATE leads SET assigned_user_id = ?2, team_id = COALESCE(?3, team_id), status = CASE WHEN status = 'new' THEN 'assigned' ELSE status END WHERE id = ?1 AND assigned_user_id IS NULL").bind(a.lead_id, a.recommended_user_id, a.user_team_id),
+      env.DB.prepare("INSERT INTO assignment_history (lead_id, from_user_id, to_user_id, from_team_id, to_team_id, reason, note) VALUES (?1, NULL, ?2, ?3, ?3, 'auto:assigned', 'Assigned automatically (manager approval is switched off).')").bind(a.lead_id, a.recommended_user_id, a.user_team_id),
+    ]);
+    done++;
+  }
+  return done;
 }
 
 // ---- Budget rules: "this employee gets leads with this budget" ----
@@ -922,6 +951,7 @@ async function handlePublicEnquiry(request, env) {
       set('raw_payload', JSON.stringify(merged));
       await env.DB.prepare(`UPDATE leads SET ${sets.join(', ')} WHERE id=?1`).bind(...binds).run();
       await applyBudgetRule(env, existing.id).catch((e) => console.error('budget rule failed', e));
+      await autoApprovePending(env, existing.id).catch((e) => console.error('auto-assign failed', e));
       const parts = noteParts().filter((p) => !p.startsWith('Form:') && !p.startsWith('Page:'));
       if (optInGiven) parts.push(`WhatsApp opt-in: ${optIn ? 'yes' : 'no'}`);
       if (parts.length) await addNote(existing.id, 'Website enquiry updated — ', parts);
@@ -3884,6 +3914,16 @@ async function handleDeleteBrochureLogo(env, actor) {
   return json({ ok: true, url: '/atlantic-properties-logo.png' });
 }
 
+/** PUT /api/auto-assign-approval { on: boolean } — super administrator and managers switch manager approval on or off. */
+async function handleSetAutoAssignApproval(request, env, actor) {
+  if (!['super_admin', 'manager'].includes(actor.role)) return fail('Only the super administrator and managers can change this.', 403);
+  const body = await bodyJson(request);
+  if (!body || typeof body.on !== 'boolean') return fail('Send { "on": true } or { "on": false }.', 422);
+  await env.DB.prepare("INSERT INTO workspace_settings (key,value,updated_at) VALUES ('auto_assign_approval',?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").bind(body.on ? 'on' : 'off').run();
+  const assignedNow = body.on ? 0 : await autoApprovePending(env);
+  return json({ ok: true, on: body.on, assigned_now: assignedNow });
+}
+
 async function handleWorkspaceSettings(request, env, actor) {
   if (!has(actor, 'team.read')) return fail('You do not have permission to view workspace settings.', 403);
   if (request.method === 'GET') {
@@ -3904,6 +3944,8 @@ async function handleWorkspaceSettings(request, env, actor) {
   }
   // Daily digest settings (Agent OPS). The provider API key is NOT a setting:
   // it is the RESEND_API_KEY Worker secret, read from env only.
+  const aa = entries.find(([k]) => k === 'auto_assign_approval');
+  if (aa && !['on', 'off'].includes(aa[1])) return fail('Manager approval must be on or off.', 422);
   const digestError = validateDigestSettings(Object.fromEntries(entries));
   if (digestError) return fail(digestError, 422);
   for (const [key, value] of entries) {
@@ -3911,8 +3953,10 @@ async function handleWorkspaceSettings(request, env, actor) {
       "INSERT INTO workspace_settings (key,value,updated_at) VALUES (?1,?2,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(key, value.trim()).run();
   }
+  let assignedNow = 0;
+  if (aa && aa[1] === 'off') assignedNow = await autoApprovePending(env); // leads already waiting in the queue get their suggested person now
   const { results } = await env.DB.prepare('SELECT key, value FROM workspace_settings').all();
-  return json({ settings: { ...DEFAULT_WORKSPACE_SETTINGS, ...Object.fromEntries((results ?? []).map(row => [row.key, row.value])) } });
+  return json({ assigned_now: assignedNow, settings: { ...DEFAULT_WORKSPACE_SETTINGS, ...Object.fromEntries((results ?? []).map(row => [row.key, row.value])) } });
 }
 
 async function handleGetLead(env, id, actor) {
@@ -8175,6 +8219,7 @@ async function route(request, env) {
     const teamUpdateMatch = path.match(/^\/api\/teams\/([^/]+)$/);
     if (teamUpdateMatch && request.method === 'PATCH') return handleUpdateTeam(request, env, teamUpdateMatch[1], actor);
 
+    if (path === '/api/auto-assign-approval' && request.method === 'PUT') return handleSetAutoAssignApproval(request, env, actor);
     if (path === '/api/budget-rules' && request.method === 'GET') return handleListBudgetRules(env, actor);
     if (path === '/api/budget-rules' && request.method === 'POST') return handleCreateBudgetRule(request, env, actor);
     const budgetRuleMatch = path.match(/^\/api\/budget-rules\/([^/]+)$/);

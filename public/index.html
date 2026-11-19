@@ -635,6 +635,12 @@ Properties</span></div>
       </section>
 
       <section id="view-routing" class="view" hidden>
+        <div class="card card-pad" id="approval-switch-card" hidden>
+          <div class="approval-switch">
+            <div><h3 style="margin:0 0 3px">Manager approval</h3><p class="muted" id="approval-switch-text" style="margin:0"></p></div>
+            <button type="button" class="switch" id="approval-switch" role="switch" aria-checked="false" aria-label="Manager approval for automatic assignment"><span></span></button>
+          </div>
+        </div>
         <div class="card" id="assignment-approvals-card" hidden>
           <div class="card-head"><div><h3>Manager approval</h3><p id="assignment-approvals-intro">Review the suggested person before a new lead is assigned.</p></div></div>
           <div id="assignment-approvals"></div>
@@ -5140,6 +5146,33 @@ function renderAssignmentApproval(approval) {
   ]);
 }
 
+// Super administrator and managers can switch manager approval of automatic assignment on or off.
+async function loadApprovalSwitch() {
+  const card = $('approval-switch-card');
+  const can = ME && ['super_admin', 'manager'].includes(ME.role);
+  card.hidden = !can;
+  if (!can) return;
+  const { settings } = await api('/api/settings');
+  const sw = $('approval-switch');
+  const paint = (on) => {
+    sw.setAttribute('aria-checked', String(on)); sw.classList.toggle('on', on);
+    $('approval-switch-text').textContent = on
+      ? 'On: a new lead is only suggested to someone. A manager approves it below before the person gets it.'
+      : 'Off: a new lead goes straight to the suggested person. No approval step.';
+  };
+  paint(settings.auto_assign_approval === 'on');
+  sw.onclick = async () => {
+    const next = sw.getAttribute('aria-checked') !== 'true';
+    sw.disabled = true;
+    try {
+      const r = await api('/api/auto-assign-approval', { method: 'PUT', body: JSON.stringify({ on: next }) });
+      paint(next);
+      showToast(next ? 'Manager approval is on' : 'Manager approval is off', next ? 'New leads wait for a manager to approve.' : (r.assigned_now ? r.assigned_now + ' waiting lead(s) were assigned now.' : 'New leads go straight to the suggested person.'));
+      await loadRouting();
+    } catch (e) { showToast('Could not change it', e.message); } finally { sw.disabled = false; }
+  };
+}
+
 async function loadRouting() {
   const canApprove = canApproveAutoAssignments();
   const [res, approvalsRes, usersRes] = await Promise.all([
@@ -5148,6 +5181,7 @@ async function loadRouting() {
     api('/api/users').catch(() => null),
   ]);
   if (usersRes) { USERS = usersRes.users; renderTeamStatus(res.rules); }
+  loadApprovalSwitch().catch(report);
   const approvalCard = $('assignment-approvals-card');
   const approvalBox = $('assignment-approvals');
   approvalCard.hidden = !canApprove;
