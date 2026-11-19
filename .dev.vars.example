@@ -1,0 +1,24 @@
+# Local development secrets. Copy to `.dev.vars` and fill in.
+# `.dev.vars` is gitignored — never commit real tokens.
+#
+# In production these are NOT set here. Set them with:
+#   npx wrangler secret put ADMIN_TOKEN
+#   npx wrangler secret put INTAKE_TOKEN_99ACRES
+#   npx wrangler secret put INTAKE_TOKEN_MAGICBRICKS
+
+# Bearer token for the admin API (/api/leads, /api/users, ...).
+ADMIN_TOKEN=dev-admin-token
+
+# One shared secret per portal, sent by them as the X-Intake-Token header.
+# Separate tokens so a leak at one portal can be rotated without touching
+# the other. The env var name is derived from the URL path:
+#   POST /api/intake/99acres      -> INTAKE_TOKEN_99ACRES
+#   POST /api/intake/magicbricks  -> INTAKE_TOKEN_MAGICBRICKS
+INTAKE_TOKEN_99ACRES=dev-99acres-token
+INTAKE_TOKEN_MAGICBRICKS=dev-magicbricks-token
+
+# Super-admin AI assistant (Gemini). Without a key the assistant button still
+# shows for the super admin but explains it isn't switched on yet.
+# Production: npx wrangler secret put GEMINI_API_KEY
+# GEMINI_API_KEY=
+# Optional: GEMINI_MODEL (default gemini-3.5-flash-lite), ASSISTANT_DAILY_LIMIT (default 400)

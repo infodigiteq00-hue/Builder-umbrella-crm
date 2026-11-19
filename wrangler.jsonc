@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "realestate-crm",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+
+  // The CRM lives at https://crm.builderumbrella.com. A Workers custom domain: on deploy, Cloudflare creates the
+  // DNS record and the HTTPS certificate itself. It only works when the builderumbrella.com zone is in the SAME
+  // Cloudflare account as this Worker. The *.workers.dev address keeps working too.
+  "routes": [{ "pattern": "crm.builderumbrella.com", "custom_domain": true }],
+  "vars": { "PROPERTY_CODE_MAP": {} },
+
+  // Background jobs (see `scheduled()` in src/index.js): the daily follow-up
+  // digest and the nightly R2 backup. Cron times are UTC — 02:30 UTC is
+  // 08:00 IST. Digest emails need `npx wrangler secret put RESEND_API_KEY`;
+  // without it digests are still computed and shown in the app.
+  "triggers": {
+    "crons": ["30 2 * * *"]
+  },
+
+  "observability": {
+    "enabled": false
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "crm",
+      "database_id": "43e9f0d1-adc3-4933-b4b5-6afd5b841565"
+    }
+  ],
+
+  // Property photos and files. Local dev emulates this automatically. In production it needs R2 enabled on the
+  // Cloudflare account (Dashboard > R2 > add the subscription), then:
+  //   npx wrangler r2 bucket create crm-property-images
+  // and un-comment the block below and redeploy. Until then the app runs; photo/file uploads answer
+  // "File storage is not configured" (HTTP 503).
+  // "r2_buckets": [
+  //   { "binding": "IMAGES", "bucket_name": "crm-property-images" }
+  // ],
+
+  // The admin UI ships from this same Worker — one deploy, one origin, no CORS.
+  // `run_worker_first` keeps /api/* going to the Worker
+  // instead of being swallowed by the SPA fallback.
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  }
+}

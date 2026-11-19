@@ -1,0 +1,10 @@
+node_modules/
+.dev.vars
+.wrangler/
+
+.production-secrets.json
+ACCESS.md
+output/
+tmp/
+x
+.DS_Store
