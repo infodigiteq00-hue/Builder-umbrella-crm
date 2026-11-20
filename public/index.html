@@ -1782,6 +1782,7 @@ async function signIn(token) {
     $('today-date').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long' });
     queueGreeting((ME.name || '').split(' ')[0]);
     await bootstrap();
+    navInit();
     refreshNotifBadge();
   } catch (e) {
     if (e.message !== 'unauthorized') $('loginerr').textContent = e.message;
@@ -1864,7 +1865,7 @@ const VIEW_LOADERS = {
   team: loadTeam, routing: loadRouting, people: loadPeople, settings: loadSettingsView, requirements: loadRequirements,
 };
 
-async function showView(view, fromHistory = false) {
+async function showView(view) {
   // On a Pre-Sales / Post-Sales page, "refresh the current view" (lead saved, Refresh…) must refresh THAT page,
   // not flip to a client page; asking for a different view (search, jump to leads) moves to the Client team.
   if (TEAM === 'presales' || TEAM === 'postsales') {
@@ -1872,8 +1873,7 @@ async function showView(view, fromHistory = false) {
     setTeam('client');
   }
   VIEW = view;
-  // Back button: every menu change is a history step, so Back returns to the previous menu instead of leaving the site.
-  if (!fromHistory) { try { (history.state?.view === undefined || history.state.view === view ? history.replaceState : history.pushState).call(history, { view }, '', '#' + view); } catch { /* ignore */ } }
+  navPush();
   document.querySelectorAll('.view').forEach((s) => (s.hidden = s.id !== 'view-' + view));
   document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('page-title').textContent = VIEW_TITLES[view][0];
@@ -1882,12 +1882,87 @@ async function showView(view, fromHistory = false) {
   try { await VIEW_LOADERS[view](); } catch (e) { report(e); }
 }
 
+// ---- Back button ----
+// Every screen the user moves to (menu, team tab, Pre-Sales page, Leads tile/list) is one history step, and an open lead /
+// dialog / menu drawer is a step too. Back undoes the last step; at the very first screen it asks to press Back again.
+let NAV_QUIET = false;       // true while a step is being restored, so restoring does not add another step
+let NAV_IGNORE_POP = 0;      // popstate events we caused ourselves (closing a layer)
+let NAV_LAYER_OPEN = false;  // a lead / dialog / drawer step is currently in the history
+let NAV_TIMER = null;
+const navSnap = () => ({ team: TEAM, view: VIEW, page: TEAM_PAGE[TEAM] || null, hunt: HUNT_PAGE, mode: $('lead-list-card').hidden ? 'tiles' : 'list', lens: LEAD_LENS });
+const navHash = (n) => '#' + (n.team === 'client' ? n.view : n.team === 'hunting' ? 'hunting/' + n.hunt : n.team + '/' + (n.page || ''));
+function navPush() {
+  if (NAV_QUIET || !TOKEN) return;
+  clearTimeout(NAV_TIMER);
+  NAV_TIMER = setTimeout(() => { // several changes in one go (team + page) become a single step
+    if (NAV_QUIET || !TOKEN || $('app').hidden) return;
+    const n = navSnap(), cur = history.state;
+    try {
+      // a drawer / dialog step that is being navigated away from is folded into the new screen's step (no empty step left behind)
+      const same = cur && cur.nav && JSON.stringify(cur.nav) === JSON.stringify(n);
+      if (same && cur.layer) return; // nothing moved; keep the open-dialog step as it is
+      if (!cur || cur.layer || same) history.replaceState({ nav: n }, '', navHash(n));
+      else history.pushState({ nav: n }, '', navHash(n));
+    } catch { /* ignore */ }
+  }, 0);
+}
+const navLayers = () => [
+  ...[...document.querySelectorAll('.overlay, .modal-overlay')].filter((o) => !o.hidden && o.getClientRects().length),
+  ...(document.querySelector('.sidebar')?.classList.contains('drawer-open') ? [document.querySelector('.sidebar')] : []),
+];
+function navCloseLayers() {
+  navLayers().forEach((o) => { if (o.classList.contains('sidebar')) o.classList.remove('drawer-open'); else o.hidden = true; });
+}
+async function navApply(n) {
+  NAV_QUIET = true;
+  try {
+    if (n.team !== TEAM) setTeam(n.team);
+    if (n.team === 'client') {
+      if (n.view !== VIEW) await showView(n.view);
+      if (n.view === 'leads') {
+        if (n.mode === 'list') { LEAD_LENS = n.lens || ''; setLeadMode('list'); paintLeadTiles(); loadLeads().catch(report); }
+        else { LEAD_LENS = ''; paintLeadTiles(); setLeadMode('tiles'); LEADS_OFFSET = 0; loadLeads().catch(report); }
+      }
+    } else if (n.team === 'hunting') { if (n.hunt !== HUNT_PAGE) showHuntPage(n.hunt); }
+    else if (n.page && n.page !== TEAM_PAGE[n.team]) await showTeamPage(n.team, n.page);
+  } catch (e) { report(e); } finally { setTimeout(() => { NAV_QUIET = false; }, 100); }
+}
+/** Called once signed in: one guard step below the first screen, so Back never silently leaves the site. */
+function navInit() {
+  try { history.replaceState({ root: true }, '', location.pathname + location.search); history.pushState({ nav: navSnap() }, '', navHash(navSnap())); } catch { /* ignore */ }
+  NAV_LAYER_OPEN = false;
+}
 window.addEventListener('popstate', (e) => {
   if (!TOKEN || $('app').hidden) return;
-  document.querySelectorAll('.modal-overlay, .lead-overlay').forEach((o) => { o.hidden = true; }); // Back closes an open lead / dialog too
-  const view = e.state?.view;
-  if (view && VIEW_LOADERS[view] && view !== VIEW) showView(view, true).catch(report);
+  if (NAV_IGNORE_POP > 0) { NAV_IGNORE_POP--; return; }
+  const s = e.state;
+  navCloseLayers(); NAV_LAYER_OPEN = false;
+  if (s?.root) {
+    const home = { team: 'client', view: 'today', page: null, hunt: 'pipeline', mode: 'tiles', lens: '' };
+    const atHome = TEAM === 'client' && VIEW === 'today';
+    if (atHome) { showToast('Press Back again to leave', 'You are on the first screen.'); return; }
+    navApply(home).then(() => { try { history.pushState({ nav: home }, '', navHash(home)); } catch { /* ignore */ } });
+    return;
+  }
+  if (s?.nav) { if (s.layer) { try { history.replaceState({ nav: s.nav }, '', navHash(s.nav)); } catch { /* ignore */ } } navApply(s.nav); }
 });
+// A lead, dialog or the menu drawer opening adds a step; closing it by hand removes that step again.
+let NAV_OBS_TIMER = null;
+new MutationObserver(() => {
+  clearTimeout(NAV_OBS_TIMER);
+  NAV_OBS_TIMER = setTimeout(() => {
+    if (!TOKEN || $('app').hidden || NAV_QUIET) return;
+    const open = navLayers().length > 0;
+    if (open && !NAV_LAYER_OPEN) {
+      NAV_LAYER_OPEN = true;
+      try { history.pushState({ nav: history.state?.nav || navSnap(), layer: true }, '', location.hash || navHash(navSnap())); } catch { /* ignore */ }
+    } else if (!open && NAV_LAYER_OPEN) {
+      NAV_LAYER_OPEN = false;
+      if (history.state?.layer) { NAV_IGNORE_POP++; history.back(); }
+    }
+  }, 40);
+}).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden', 'class'], childList: true });
+
 
 // Insights and Appraisals live under one "Performance" nav item as two
 // sub-tabs sharing the same page — switching tabs re-uses whichever data
@@ -1921,6 +1996,7 @@ let TEAM = 'client';
 let HUNT_PAGE = 'pipeline'; // 'pipeline' | 'catalog'
 function showHuntPage(page) {
   HUNT_PAGE = page;
+  navPush();
   const catalog = page === 'catalog';
   $('view-hunting').hidden = catalog;
   $('view-catalog').hidden = !catalog;
@@ -1938,6 +2014,7 @@ function showHuntPage(page) {
 }
 function setTeam(team) {
   TEAM = team;
+  navPush();
   const hunting = team === 'hunting';
   const teamPages = team === 'presales' || team === 'postsales';
   document.querySelectorAll('[data-team]').forEach((b) => {
@@ -1988,6 +2065,7 @@ async function showTeamPage(team, key) {
     return;
   }
   TEAM_PAGE[team] = page.key;
+  navPush();
   document.querySelectorAll('#nav-' + team + ' [data-teampage]').forEach((b) => b.classList.toggle('active', b.dataset.teampage === page.key));
   $('page-title').textContent = page.title || page.label;
   $('page-desc').textContent = page.desc || '';
@@ -3283,6 +3361,7 @@ async function refreshLeadTiles() {
 // The Leads page has two screens, like Properties: the tiles (overview) and, after a tile is
 // clicked, the leads list in its own view with a "← Overview" button.
 function setLeadMode(mode) {
+  navPush();
   $('lead-tiles').hidden = mode === 'list';
   $('lead-list-card').hidden = mode !== 'list';
   if (mode === 'list') window.scrollTo?.({ top: 0 });
