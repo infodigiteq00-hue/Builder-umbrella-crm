@@ -1251,7 +1251,19 @@ document.querySelectorAll('.catalog-tabs').forEach((c) => attachMotionThumb(c, '
 document.querySelectorAll('.sidebar nav').forEach((c) => attachMotionThumb(c, '.nav-item'));
 // Scroll edge effect: the top bar only shows its edge once content slides under it.
 addEventListener('scroll', () => document.querySelector('.topbar')?.classList.toggle('scrolled', scrollY > 4), { passive: true });
-let TOKEN = sessionStorage.getItem('crm_token') || '';
+// Sign-in is kept for a short time (8 hours) so closing the tab or browser and coming back does not ask again.
+const SESSION_KEEP_MS = 8 * 60 * 60 * 1000;
+function savedToken() {
+  try {
+    const t = sessionStorage.getItem('crm_token');
+    if (t) return t;
+    const s = JSON.parse(localStorage.getItem('crm_session') || 'null');
+    if (s && s.token && s.exp > Date.now()) return s.token;
+    localStorage.removeItem('crm_session');
+  } catch { /* storage blocked */ }
+  return '';
+}
+let TOKEN = savedToken();
 let USERS = [];
 let TEAMS = [];
 let BUILDER_NAMES = [];
@@ -1742,7 +1754,7 @@ function applyRoleAccess() {
 function signOut(msg) {
   // Tell the server to end this session (best effort), then forget the token here.
   if (TOKEN) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN } }).catch(() => {});
-  TOKEN = ''; sessionStorage.removeItem('crm_token');
+  TOKEN = ''; sessionStorage.removeItem('crm_token'); try { localStorage.removeItem('crm_session'); } catch { /* storage blocked */ }
   alrHideHigh(); // alerts (wave3): the high-alert card never stays over the sign-in screen
   $('app').hidden = true; $('login').hidden = false;
   $('loginerr').textContent = msg || ''; $('login-pass').value = '';
@@ -1759,6 +1771,7 @@ async function signIn(token) {
     const me = await api('/api/me');
     ME = me.user;
     sessionStorage.setItem('crm_token', token);
+    try { if (!localStorage.getItem('crm_session') || JSON.parse(localStorage.getItem('crm_session')).token !== token) localStorage.setItem('crm_session', JSON.stringify({ token, exp: Date.now() + SESSION_KEEP_MS })); } catch { /* storage blocked */ }
     $('login').hidden = true; $('app').hidden = false; $('loginerr').textContent = '';
     $('account-avatar').textContent = initials(ME.name);
     $('account-name').textContent = ME.name;
@@ -1851,7 +1864,7 @@ const VIEW_LOADERS = {
   team: loadTeam, routing: loadRouting, people: loadPeople, settings: loadSettingsView, requirements: loadRequirements,
 };
 
-async function showView(view) {
+async function showView(view, fromHistory = false) {
   // On a Pre-Sales / Post-Sales page, "refresh the current view" (lead saved, Refresh…) must refresh THAT page,
   // not flip to a client page; asking for a different view (search, jump to leads) moves to the Client team.
   if (TEAM === 'presales' || TEAM === 'postsales') {
@@ -1859,6 +1872,8 @@ async function showView(view) {
     setTeam('client');
   }
   VIEW = view;
+  // Back button: every menu change is a history step, so Back returns to the previous menu instead of leaving the site.
+  if (!fromHistory) { try { (history.state?.view === undefined || history.state.view === view ? history.replaceState : history.pushState).call(history, { view }, '', '#' + view); } catch { /* ignore */ } }
   document.querySelectorAll('.view').forEach((s) => (s.hidden = s.id !== 'view-' + view));
   document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('page-title').textContent = VIEW_TITLES[view][0];
@@ -1866,6 +1881,13 @@ async function showView(view) {
   $('app-error').hidden = true;
   try { await VIEW_LOADERS[view](); } catch (e) { report(e); }
 }
+
+window.addEventListener('popstate', (e) => {
+  if (!TOKEN || $('app').hidden) return;
+  document.querySelectorAll('.modal-overlay, .lead-overlay').forEach((o) => { o.hidden = true; }); // Back closes an open lead / dialog too
+  const view = e.state?.view;
+  if (view && VIEW_LOADERS[view] && view !== VIEW) showView(view, true).catch(report);
+});
 
 // Insights and Appraisals live under one "Performance" nav item as two
 // sub-tabs sharing the same page — switching tabs re-uses whichever data
