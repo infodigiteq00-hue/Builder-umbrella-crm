@@ -2527,6 +2527,8 @@ a.pj-doc-link:active { transform: scale(.99); }
 .ld-tile.active { background: var(--accent-soft); border-color: var(--stage, var(--accent)); box-shadow: 0 0 0 2px var(--stage, var(--accent)) inset, 0 10px 24px rgba(16,19,26,.08); }
 .ld-lens-all { --stage: var(--text); }
 .ld-lens-new { --stage: #0891B2; }
+.ld-lens-tried_calling { --stage: #0EA5E9; }
+.ld-lens-interested { --stage: #059669; }
 .ld-lens-hot { --stage: #DC2626; }
 .ld-lens-due_today { --stage: #D97706; }
 .ld-lens-overdue { --stage: #B91C1C; }

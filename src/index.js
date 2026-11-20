@@ -1011,6 +1011,8 @@ const LEAD_LENS_DAY = `date(l.next_follow_up_at, '+330 minutes')`;
 const LEAD_LENS_TODAY = `date('now', '+330 minutes')`;
 const LEAD_LENSES = {
   new: `l.stage = 'new' AND ${LEAD_LENS_OPEN}`,
+  tried_calling: `l.stage = 'contact_attempted' AND ${LEAD_LENS_OPEN}`,
+  interested: `l.stage = 'qualified' AND ${LEAD_LENS_OPEN}`,
   hot: `l.research_level = 'advanced' AND ${LEAD_LENS_OPEN}`,
   due_today: `${LEAD_LENS_OPEN} AND l.next_follow_up_at IS NOT NULL AND ${LEAD_LENS_DAY} = ${LEAD_LENS_TODAY}`,
   overdue: `${LEAD_LENS_OPEN} AND l.next_follow_up_at IS NOT NULL AND ${LEAD_LENS_DAY} < ${LEAD_LENS_TODAY}`,
