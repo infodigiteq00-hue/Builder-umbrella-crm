@@ -3606,3 +3606,9 @@ td > .pill + .lss-pill { margin-left: 6px; }
 .switch.on { background: var(--accent, #4f46e5); }
 .switch.on span { transform: translateX(22px); }
 .switch:disabled { opacity: .6; cursor: default; }
+
+/* Lead panel: archive / delete buttons */
+.lead-danger-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.btn-danger { color: #B91C1C; border-color: #FCA5A5; }
+.btn-danger:hover { background: #FEF2F2; }
+.ld-lens-archived { --stage: #94A3B8; }

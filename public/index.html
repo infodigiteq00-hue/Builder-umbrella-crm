@@ -2391,6 +2391,31 @@ LEAD_DETAIL_SECTIONS.push((lead) => {
   return el('div', {}, [el('div', { class: 'section-label', text: 'From the website form' }), ...rows]);
 });
 
+// Lead window: archive (hide, keep everything) or delete (permanent, administrators only).
+LEAD_DETAIL_SECTIONS.push((lead) => {
+  const done = async (title, msg) => { $('lead-overlay').hidden = true; showToast(title, msg); await showView(VIEW); };
+  const archive = el('button', { class: 'btn', text: lead.archived_at ? 'Restore from archive' : 'Archive lead', attrs: { type: 'button' } });
+  archive.addEventListener('click', async () => {
+    const hide = !lead.archived_at;
+    if (hide && !confirm('Archive this lead? It disappears from the lists and counts but nothing is lost. You can restore it from the Archived tile.')) return;
+    archive.disabled = true;
+    try { await api('/api/leads/' + encodeURIComponent(lead.id) + '/archive', { method: 'POST', body: JSON.stringify({ archived: hide }) }); await done(hide ? 'Lead archived' : 'Lead restored', hide ? 'Find it under the Archived tile.' : 'It is back in the lists.'); }
+    catch (e) { showToast('Could not do that', e.message); archive.disabled = false; }
+  });
+  const actions = [archive];
+  if (hasPermission('lead.delete')) {
+    const del = el('button', { class: 'btn btn-danger', text: 'Delete lead', attrs: { type: 'button' } });
+    del.addEventListener('click', async () => {
+      if (!confirm('Delete ' + (lead.customer_name || 'this lead') + ' permanently?\n\nThe lead, its notes, calls and visits are removed and cannot be brought back. Use Archive if you only want it out of the way.')) return;
+      del.disabled = true;
+      try { await api('/api/leads/' + encodeURIComponent(lead.id), { method: 'DELETE' }); await done('Lead deleted', 'It has been removed.'); }
+      catch (e) { showToast('Could not delete', e.message); del.disabled = false; }
+    });
+    actions.push(del);
+  }
+  return el('div', {}, [el('div', { class: 'section-label', text: lead.archived_at ? 'Archived lead' : 'Archive or delete' }), el('div', { class: 'lead-danger-actions' }, actions)]);
+});
+
 // Lead window: tokens with their status, and the deals started from them.
 LEAD_DETAIL_SECTIONS.push((lead, { id, reload }) => {
   const head = el('div', { class: 'txn-lead-head' }, [el('div', { class: 'section-label', text: 'Token & transaction' })]);
@@ -3321,6 +3346,7 @@ const LEAD_LENS_DEFS = [
   { key: 'negotiation', label: 'Negotiating', hint: 'Offer made or in talks' },
   { key: 'won', label: 'Sold', hint: 'Deal closed' },
   { key: 'lost', label: 'Not interested', hint: 'Closed without a deal' },
+  { key: 'archived', label: 'Archived', hint: 'Hidden from the lists' },
 ];
 const LEAD_LENS_LABEL = Object.fromEntries(LEAD_LENS_DEFS.filter((d) => d.key).map((d) => [d.key, d.label]));
 const leadTileNodes = new Map(); // lens key → { btn, num, share }

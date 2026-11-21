@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS leads (
   purpose           TEXT,
   current_home      TEXT,
   whatsapp_opt_in   INTEGER CHECK (whatsapp_opt_in IS NULL OR whatsapp_opt_in IN (0, 1)),
+  -- 0076: archived leads are hidden from lists and counts (NULL = active)
+  archived_at       TEXT,
 
   created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1373,3 +1375,5 @@ CREATE TABLE IF NOT EXISTS budget_rules (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_budget_rules_user ON budget_rules (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_leads_archived ON leads (archived_at);

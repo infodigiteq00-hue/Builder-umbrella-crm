@@ -131,7 +131,7 @@ const AGENT_ROLES = ['agent', 'sales_employee'];
 const isAgentRole = (role) => AGENT_ROLES.includes(role);
 const ROLE_PERMISSIONS = {
   super_admin: ['*'],
-  admin: ['lead.read_all', 'lead.create', 'lead.update_all', 'lead.assign_direct', 'activity.write', 'transfer.respond', 'team.read', 'routing.manage', 'catalog.manage',
+  admin: ['lead.read_all', 'lead.create', 'lead.update_all', 'lead.assign_direct', 'activity.write', 'transfer.respond', 'team.read', 'routing.manage', 'lead.delete', 'catalog.manage',
     'hunting.read_all', 'hunting.create', 'hunting.update_all', 'hunting.assign',
     // wave 3 (0060)
     'handover.submit', 'handover.respond', 'inventory.assign', 'visit.write', 'transaction.read', 'transaction.write',
@@ -1006,7 +1006,7 @@ const LEAD_SORTS = {
 // `leads l`; the same conditions drive both the list (`?lens=`) and the tile
 // counts (`GET /api/leads/summary`), so a tile's number always matches its list.
 // "Today" means the business day in India (IST), like the dashboard.
-const LEAD_LENS_OPEN = `l.status IN (${OPEN_STATUSES.map((s) => `'${s}'`).join(',')})`;
+const LEAD_LENS_OPEN = `l.status IN (${OPEN_STATUSES.map((s) => `'${s}'`).join(',')}) AND l.archived_at IS NULL`;
 const LEAD_LENS_DAY = `date(l.next_follow_up_at, '+330 minutes')`;
 const LEAD_LENS_TODAY = `date('now', '+330 minutes')`;
 const LEAD_LENSES = {
@@ -1021,7 +1021,10 @@ const LEAD_LENSES = {
   negotiation: `l.stage IN ('proposal', 'negotiation')`,
   won: `l.stage = 'won'`,
   lost: `l.stage = 'lost'`,
+  archived: `l.archived_at IS NOT NULL`,
 };
+// Archived leads only show under their own tile; every other tile and the list leave them out.
+for (const k of Object.keys(LEAD_LENSES)) if (k !== 'archived') LEAD_LENSES[k] = `l.archived_at IS NULL AND (${LEAD_LENSES[k]})`;
 
 /** GET /api/leads/summary — live tile counts, scoped exactly like the lead list (own / team / all). */
 async function handleLeadSummary(request, env, actor) {
@@ -1033,7 +1036,7 @@ async function handleLeadSummary(request, env, actor) {
     else return fail('You do not have permission to view leads.', 403);
   }
   const cols = Object.entries(LEAD_LENSES).map(([key, cond]) => `COALESCE(SUM(CASE WHEN ${cond} THEN 1 ELSE 0 END), 0) AS ${key}`);
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS "all", ${cols.join(', ')} FROM leads l ${scope}`).bind(...binds).first();
+  const row = await env.DB.prepare(`SELECT COUNT(CASE WHEN l.archived_at IS NULL THEN 1 END) AS "all", ${cols.join(', ')} FROM leads l ${scope}`).bind(...binds).first();
   return json({ counts: row ?? {} });
 }
 
@@ -1048,7 +1051,7 @@ async function handleLeadProjects(request, env, actor) {
   }
   const { results } = await env.DB.prepare(
     `SELECT trim(l.project_name) AS name, COUNT(*) AS n FROM leads l
-      WHERE NULLIF(trim(COALESCE(l.project_name,'')),'') IS NOT NULL ${scope}
+      WHERE NULLIF(trim(COALESCE(l.project_name,'')),'') IS NOT NULL AND l.archived_at IS NULL ${scope}
       GROUP BY lower(trim(l.project_name)) ORDER BY n DESC, name LIMIT 200`
   ).bind(...binds).all();
   return json({ projects: results ?? [] });
@@ -1173,6 +1176,7 @@ async function handleListLeads(request, env, actor) {
 
   const filters = [];
   const binds = [];
+  if (url.searchParams.get('lens') !== 'archived') filters.push('l.archived_at IS NULL'); // archived leads only show under the Archived tile
   for (const key of ['status', 'stage', 'source', 'assigned_user_id', 'team_id', 'property_type']) {
     const value = url.searchParams.get(key);
     if (value) {
@@ -1318,6 +1322,7 @@ async function handleLeadAnalytics(request, env, actor) {
 
   const filters = [];
   const binds = [];
+  filters.push('l.archived_at IS NULL');
   if (fromRaw) { binds.push(fromRaw); filters.push(`date(l.created_at) >= ?${binds.length}`); }
   if (toRaw) { binds.push(toRaw); filters.push(`date(l.created_at) <= ?${binds.length}`); }
   const convertedFilter = analyticsConverted(url);
@@ -1508,6 +1513,7 @@ async function handleSupplyGap(request, env, actor) {
 
   const filters = [`TRIM(COALESCE(l.location, '')) <> ''`];
   const binds = [];
+  filters.push('l.archived_at IS NULL');
   if (range.from) { binds.push(range.from); filters.push(`date(l.created_at) >= ?${binds.length}`); }
   if (range.to) { binds.push(range.to); filters.push(`date(l.created_at) <= ?${binds.length}`); }
   if (convertedFilter.sql) filters.push(convertedFilter.sql);
@@ -1594,6 +1600,7 @@ async function handleSourceAnalytics(request, env, actor) {
   const convertedFilter = analyticsConverted(srcUrl);
   const filters = [];
   const binds = [];
+  filters.push('l.archived_at IS NULL');
   if (range.from) { binds.push(range.from); filters.push(`date(l.created_at) >= ?${binds.length}`); }
   if (range.to) { binds.push(range.to); filters.push(`date(l.created_at) <= ?${binds.length}`); }
   if (convertedFilter.sql) filters.push(convertedFilter.sql);
@@ -1651,6 +1658,7 @@ async function handleLostReasonAnalytics(request, env, actor) {
   const convertedFilter = analyticsConverted(url);
   const filters = ["l.stage = 'lost'"];
   const binds = [];
+  filters.push('l.archived_at IS NULL');
   if (range.from) { binds.push(range.from); filters.push(`date(l.created_at) >= ?${binds.length}`); }
   if (range.to) { binds.push(range.to); filters.push(`date(l.created_at) <= ?${binds.length}`); }
   if (convertedFilter.sql) filters.push(convertedFilter.sql);
@@ -4735,6 +4743,35 @@ async function handleAssignLead(request, env, id, actor) {
   return handleGetLead(env, id, actor);
 }
 
+/** POST /api/leads/:id/archive { archived: true|false } - hide a lead from the lists (or bring it back). Nothing is lost. */
+async function handleArchiveLead(request, env, id, actor) {
+  const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?1').bind(id).first();
+  if (!lead) return fail('Lead not found.', 404);
+  if (!canUpdateLead(actor, lead)) return fail('You do not have permission to archive this lead.', 403);
+  const body = await bodyJson(request);
+  const archived = body?.archived !== false;
+  await env.DB.batch([
+    env.DB.prepare(archived ? "UPDATE leads SET archived_at = datetime('now') WHERE id = ?1" : 'UPDATE leads SET archived_at = NULL WHERE id = ?1').bind(id),
+    env.DB.prepare("INSERT INTO lead_activities (id,lead_id,actor_user_id,type,subject) VALUES (?1,?2,?3,'note',?4)")
+      .bind(crypto.randomUUID(), id, actorUserId(actor), archived ? 'Lead archived' : 'Lead restored from the archive'),
+  ]);
+  return json({ ok: true, archived });
+}
+
+/** DELETE /api/leads/:id - permanently removes a lead and its history. Administrators only; refused when a token or deal exists. */
+async function handleDeleteLead(env, id, actor) {
+  if (!has(actor, 'lead.delete')) return fail('Only administrators can delete a lead. You can archive it instead.', 403);
+  const lead = await env.DB.prepare('SELECT id FROM leads WHERE id = ?1').bind(id).first();
+  if (!lead) return fail('Lead not found.', 404);
+  const deals = await env.DB.prepare('SELECT (SELECT COUNT(*) FROM bookings WHERE lead_id = ?1) + (SELECT COUNT(*) FROM transactions WHERE lead_id = ?1) AS n').bind(id).first('n');
+  if (deals > 0) return fail('This lead has a token or a deal recorded, so it cannot be deleted. Archive it instead.', 409);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM intake_receipts WHERE lead_id = ?1').bind(id),
+    env.DB.prepare('DELETE FROM leads WHERE id = ?1').bind(id), // history, visits, handovers, shortlist... go with it (ON DELETE CASCADE)
+  ]);
+  return json({ ok: true });
+}
+
 async function handleListUsers(env, actor) {
   if (!has(actor, 'team.read')) return fail('You do not have permission to view employees.', 403);
   const placeholders = OPEN_STATUSES.map((_, i) => `?${i + 1}`).join(', ');
@@ -5213,19 +5250,19 @@ async function handleDashboard(env, actor) {
   const TODAY = `date('now', '+330 minutes')`;
   const localDay = (col) => `date(${col}, '+330 minutes')`;
   const MONTH_START_UTC = `datetime(date('now', '+330 minutes', 'start of month'), '-330 minutes')`;
-  const CALL_LIST_WHERE = `l.status IN (${OPEN})
+  const CALL_LIST_WHERE = `l.archived_at IS NULL AND l.status IN (${OPEN})
           AND (l.stage = 'new' OR (l.next_follow_up_at IS NOT NULL AND ${localDay('l.next_follow_up_at')} <= ${TODAY}))
           ${scopeSql}`;
 
   const [callFirst, dueLater, siteVisits, soldThisMonth, totalThisMonth, callListResult, callListTotal] = await Promise.all([
     env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM leads l WHERE l.status IN (${OPEN})
+      `SELECT COUNT(*) AS n FROM leads l WHERE l.archived_at IS NULL AND l.status IN (${OPEN})
          AND (l.stage = 'new' OR (l.next_follow_up_at IS NOT NULL AND l.next_follow_up_at < datetime('now')))
          ${scopeSql}`
     ).bind(...scopeParams).first('n'),
 
     env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM leads l WHERE l.status IN (${OPEN})
+      `SELECT COUNT(*) AS n FROM leads l WHERE l.archived_at IS NULL AND l.status IN (${OPEN})
          AND l.next_follow_up_at IS NOT NULL AND ${localDay('l.next_follow_up_at')} = ${TODAY} AND l.next_follow_up_at >= datetime('now')
          ${scopeSql}`
     ).bind(...scopeParams).first('n'),
@@ -5698,7 +5735,7 @@ async function handlePresalesAllLeads(request, env, actor) {
   if (!sc) return fail('You do not have permission to view leads.', 403);
   const binds = [];
   const b = (v) => { binds.push(v); return '?' + binds.length; };
-  const where = [sc.lead(b)];
+  const where = [sc.lead(b), 'l.archived_at IS NULL'];
   const project = url.searchParams.get('project')?.trim();
   if (project) where.push(`lower(trim(COALESCE(l.project_name,''))) = lower(${b(project.slice(0, 200))})`);
   const q = url.searchParams.get('q')?.trim();
@@ -6716,7 +6753,7 @@ async function readWorkspaceSettingsMap(env) {
 async function computeDigests(env, runAt) {
   const OPEN = OPEN_STATUSES.map(s => `'${s}'`).join(',');
   const CLOSED = HUNTING_CLOSED_STAGES.map(s => `'${s}'`).join(',');
-  const LEAD_DUE = `l.status IN (${OPEN}) AND l.next_follow_up_at IS NOT NULL AND datetime(l.next_follow_up_at) <= datetime(?1)`;
+  const LEAD_DUE = `l.archived_at IS NULL AND l.status IN (${OPEN}) AND l.next_follow_up_at IS NOT NULL AND datetime(l.next_follow_up_at) <= datetime(?1)`;
   const HUNT_DUE = `t.stage NOT IN (${CLOSED}) AND t.next_follow_up_at IS NOT NULL AND datetime(t.next_follow_up_at) <= datetime(?1)`;
 
   const [usersRes, teamsRes, leadCounts, huntCounts, leadItems, huntItems] = await Promise.all([
@@ -7131,7 +7168,7 @@ async function runScheduledJobs(env, cron) {
 // lists their keys. A restore never deletes or changes R2 files.
 // ---------------------------------------------------------------------------
 
-const CRM_SCHEMA_VERSION = 75; // number of the newest migrations/NNNN-*.sql file — bump it with every new migration
+const CRM_SCHEMA_VERSION = 76; // number of the newest migrations/NNNN-*.sql file — bump it with every new migration
 const BKR_FORMAT = 'realestate-crm-backup';
 const BKR_KEEP_TABLES = new Set(['backups', 'digests', 'app_admin']); // app_admin = the super administrator's own login: a restore never replaces it
 const BKR_AUTH_COLUMNS = new Set(['access_token_hash', 'password_hash', 'is_active', 'role', 'permission_overrides']);
@@ -8234,6 +8271,10 @@ async function route(request, env) {
     if (teamUpdateMatch && request.method === 'PATCH') return handleUpdateTeam(request, env, teamUpdateMatch[1], actor);
 
     if (path === '/api/auto-assign-approval' && request.method === 'PUT') return handleSetAutoAssignApproval(request, env, actor);
+    const leadArchiveMatch = path.match(/^\/api\/leads\/([^/]+)\/archive$/);
+    if (leadArchiveMatch && request.method === 'POST') return handleArchiveLead(request, env, leadArchiveMatch[1], actor);
+    const leadDeleteMatch = path.match(/^\/api\/leads\/([^/]+)$/);
+    if (leadDeleteMatch && request.method === 'DELETE') return handleDeleteLead(env, leadDeleteMatch[1], actor);
     if (path === '/api/budget-rules' && request.method === 'GET') return handleListBudgetRules(env, actor);
     if (path === '/api/budget-rules' && request.method === 'POST') return handleCreateBudgetRule(request, env, actor);
     const budgetRuleMatch = path.match(/^\/api\/budget-rules\/([^/]+)$/);
