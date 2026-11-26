@@ -787,15 +787,18 @@ async function applyBudgetRule(env, leadId) {
   const lead = await env.DB.prepare('SELECT id, source, project_name, budget_min, budget_max, assigned_user_id, team_id FROM leads WHERE id = ?1').bind(leadId).first();
   if (!lead || lead.assigned_user_id) return null;
   const floor = leadBudgetFloor(lead);
-  if (floor === null) return null; // no budget at all: no budget rule applies
+  // A lead with no budget only matches an "any budget" rule (both limits empty, project set).
   const { results } = await env.DB.prepare(
     `SELECT r.*, u.team_id AS user_team_id, u.name AS user_name FROM budget_rules r JOIN users u ON u.id = r.user_id
       WHERE r.is_active = 1 AND u.is_active = 1 AND u.accepts_leads = 1 AND u.role IN ('agent', 'sales_employee') AND u.team_id IS NOT NULL
       ORDER BY r.priority, r.created_at`
   ).all();
   const proj = String(lead.project_name || '').trim().toLowerCase();
-  const rule = (results ?? []).find((r) =>
-    (r.budget_min === null || floor >= r.budget_min) && (r.budget_max === null || floor < r.budget_max) &&
+  const anyBudget = (r) => r.budget_min === null && r.budget_max === null;
+  // specific budget ranges first; "any budget" rules last, so they only catch what no range claimed
+  const ordered = [...(results ?? [])].sort((x, y) => Number(anyBudget(x)) - Number(anyBudget(y)));
+  const rule = ordered.find((r) =>
+    (floor === null ? anyBudget(r) : ((r.budget_min === null || floor >= r.budget_min) && (r.budget_max === null || floor < r.budget_max))) &&
     (!r.project || r.project.trim().toLowerCase() === proj));
   if (!rule) return null;
   const approval = await env.DB.prepare('SELECT id, status, recommended_user_id FROM assignment_approvals WHERE lead_id = ?1').bind(leadId).first();
@@ -831,7 +834,8 @@ async function budgetRuleFields(request, env) {
   const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
   const min = num(body.budget_min), max = num(body.budget_max);
   if ((min !== null && (!Number.isFinite(min) || min < 0)) || (max !== null && (!Number.isFinite(max) || max < 0))) return { error: fail('Budget amounts must be positive numbers (in rupees).', 422) };
-  if (min === null && max === null) return { error: fail('Enter a budget from, a budget to, or both.', 422) };
+  const projectGiven = typeof body.project === 'string' && body.project.trim();
+  if (min === null && max === null && !projectGiven) return { error: fail('Enter a budget from, a budget to, or both. (Leave both empty only when you pick a project: it then means any budget.)', 422) };
   if (min !== null && max !== null && max <= min) return { error: fail('"To" must be higher than "from".', 422) };
   const user = await env.DB.prepare('SELECT id, name, role, team_id, is_active FROM users WHERE id = ?1').bind(String(body.user_id || '')).first();
   if (!user || !user.is_active) return { error: fail('Choose an active employee.', 422) };

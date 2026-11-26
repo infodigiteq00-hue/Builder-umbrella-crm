@@ -5356,7 +5356,7 @@ const BR_PRESETS = [
   ['₹3 Cr and above', 3 * CR_RUPEES, null], ['₹3 Cr – ₹4 Cr', 3 * CR_RUPEES, 4 * CR_RUPEES], ['₹4 Cr and above', 4 * CR_RUPEES, null],
 ];
 const brMoney = (n) => money(n).replace(/ L$/, ' Lakh');
-const brRange = (r) => (r.budget_min == null ? 'under ' + brMoney(r.budget_max) : r.budget_max == null ? brMoney(r.budget_min) + ' and above' : brMoney(r.budget_min) + ' to ' + brMoney(r.budget_max));
+const brRange = (r) => (r.budget_min == null && r.budget_max == null ? 'of any size (or none)' : r.budget_min == null ? 'under ' + brMoney(r.budget_max) : r.budget_max == null ? brMoney(r.budget_min) + ' and above' : brMoney(r.budget_min) + ' to ' + brMoney(r.budget_max));
 async function renderBudgetRules() {
   const [{ rules }, projRes] = await Promise.all([api('/api/budget-rules'), api('/api/leads/projects').catch(() => ({ projects: [] }))]);
   const canEdit = hasPermission('routing.manage');
@@ -5367,7 +5367,7 @@ async function renderBudgetRules() {
     const who = el('select', { attrs: { 'aria-label': 'Employee' } }, [el('option', { text: agents.length ? 'Choose an employee…' : 'No employee in a team yet', attrs: { value: '' } }), ...agents.map((u) => el('option', { text: `${u.name}${u.team_name ? ' — ' + u.team_name : ''}`, attrs: { value: u.id } }))]);
     // Budget ranges are multi-select: tick as many as you like; one rule is created per range.
     const picked = new Set();
-    let customOn = false;
+    let customOn = false, anyOn = false;
     const ranges = el('div', { class: 'pill-picker br-ranges', attrs: { role: 'group', 'aria-label': 'Budget ranges' } });
     const drawRanges = () => ranges.replaceChildren(
       ...BR_PRESETS.map(([label], i) => {
@@ -5376,6 +5376,12 @@ async function renderBudgetRules() {
         b.addEventListener('click', () => { picked.has(i) ? picked.delete(i) : picked.add(i); drawRanges(); });
         return b;
       }),
+      (() => {
+        const b = el('button', { text: 'Any budget (pick a project)', attrs: { type: 'button', 'aria-pressed': String(anyOn) } });
+        b.classList.toggle('picked', anyOn);
+        b.addEventListener('click', () => { anyOn = !anyOn; drawRanges(); });
+        return b;
+      })(),
       (() => {
         const b = el('button', { text: 'Custom range…', attrs: { type: 'button', 'aria-pressed': String(customOn) } });
         b.classList.toggle('picked', customOn);
@@ -5395,6 +5401,7 @@ async function renderBudgetRules() {
       const list = [...picked].sort((a, b) => a - b).map((i) => [BR_PRESETS[i][1], BR_PRESETS[i][2]]);
       if (customOn) list.push([from.value === '' ? null : Math.round(Number(from.value) * CR_RUPEES), to.value === '' ? null : Math.round(Number(to.value) * CR_RUPEES)]);
       if (!who.value) { err.textContent = 'Choose the employee who should get these leads.'; return; }
+      if (anyOn) { if (!proj.value) { err.textContent = 'Pick a project for an "any budget" rule.'; return; } list.push([null, null]); }
       if (!list.length) { err.textContent = 'Tick at least one budget range.'; return; }
       add.disabled = true;
       let made = 0;
