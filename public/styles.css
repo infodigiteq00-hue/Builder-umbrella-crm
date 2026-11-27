@@ -3612,3 +3612,7 @@ td > .pill + .lss-pill { margin-left: 6px; }
 .btn-danger { color: #B91C1C; border-color: #FCA5A5; }
 .btn-danger:hover { background: #FEF2F2; }
 .ld-lens-archived { --stage: #94A3B8; }
+
+.lead-name-edit { display: flex; gap: 8px; margin: 6px 0 2px; }
+.lead-name-edit input { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 480px) { .lead-name-edit { flex-direction: column; } }

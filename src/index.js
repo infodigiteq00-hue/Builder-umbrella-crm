@@ -5160,6 +5160,14 @@ async function handleUpdateLead(request, env, id, actor) {
     if (body[key] === undefined) return lead[key];
     return typeof body[key] === 'string' ? body[key].trim() || null : null;
   };
+  // Customer name: anyone who may update the lead can fill in or correct it (many website / ad leads arrive without one).
+  let customerName = lead.customer_name;
+  if (body.customer_name !== undefined) {
+    customerName = typeof body.customer_name === 'string' ? body.customer_name.replace(/\s+/g, ' ').trim() : '';
+    if (!customerName) return fail('Enter the customer name.', 422);
+    if (customerName.length > 160) return fail('The name must be 160 characters or fewer.', 422);
+  }
+  const nameNote = customerName !== lead.customer_name ? (lead.customer_name ? `Name changed from "${lead.customer_name}" to "${customerName}"` : `Name set to "${customerName}"`) : null;
   const projectName = textField('project_name');
   const propertyType = textField('property_type');
   const location = textField('location');
@@ -5167,10 +5175,10 @@ async function handleUpdateLead(request, env, id, actor) {
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) || null : null;
   const sub = leadSubStatusPlan(body, lead, stage, note); // wave3 C
   if (sub.error) return sub.error;
-  const sameStageNote = [sub.activity, note].filter(Boolean).join(' — ') || null;
+  const sameStageNote = [nameNote, sub.activity, note].filter(Boolean).join(' — ') || null;
   await env.DB.batch([
-    env.DB.prepare('UPDATE leads SET stage=?2, priority=?3, next_follow_up_at=?4, status=?5, project_name=?6, property_type=?7, location=?8, research_level=?9 WHERE id=?1')
-      .bind(id, stage, priority, body.next_follow_up_at === undefined ? lead.next_follow_up_at : body.next_follow_up_at || null, status, projectName, propertyType, location, researchLevel),
+    env.DB.prepare('UPDATE leads SET stage=?2, priority=?3, next_follow_up_at=?4, status=?5, project_name=?6, property_type=?7, location=?8, research_level=?9, customer_name=?10 WHERE id=?1')
+      .bind(id, stage, priority, body.next_follow_up_at === undefined ? lead.next_follow_up_at : body.next_follow_up_at || null, status, projectName, propertyType, location, researchLevel, customerName),
     env.DB.prepare('UPDATE leads SET sub_status=?2, lost_reason=?3, lost_note=?4 WHERE id=?1').bind(id, sub.subStatus, sub.lostReason, sub.lostNote),
     ...(stage !== lead.stage ? [env.DB.prepare('INSERT INTO lead_stage_history (lead_id,from_stage,to_stage,actor_user_id,note,sub_status,lost_reason) VALUES (?1,?2,?3,?4,?5,?6,?7)')
       .bind(id, lead.stage, stage, actor.id, note || sub.lostNote, sub.subStatus, sub.lostReason)] : []),

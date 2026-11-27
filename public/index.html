@@ -2391,6 +2391,25 @@ LEAD_DETAIL_SECTIONS.push((lead) => {
   return el('div', {}, [el('div', { class: 'section-label', text: 'From the website form' }), ...rows]);
 });
 
+// Lead window: the customer's name. Many website / ad leads arrive without one; whoever can work the lead can type it in.
+LEAD_DETAIL_SECTIONS.push((lead) => {
+  if (!hasPermission('lead.update_own') && !hasPermission('lead.update_team') && !hasPermission('lead.update_all')) return null;
+  const input = el('input', { attrs: { value: lead.customer_name || '', maxlength: '160', placeholder: 'Type the customer name', 'aria-label': 'Customer name', autocomplete: 'off' } });
+  const save = el('button', { class: 'btn btn-primary', text: 'Save name', attrs: { type: 'button' } });
+  const err = el('p', { class: 'err', attrs: { role: 'alert' } });
+  const run = async () => {
+    const name = input.value.replace(/\s+/g, ' ').trim();
+    if (!name) { err.textContent = 'Enter the customer name.'; return; }
+    if (name === (lead.customer_name || '')) { err.textContent = 'That is already the saved name.'; return; }
+    err.textContent = ''; save.disabled = true;
+    try { await api('/api/leads/' + encodeURIComponent(lead.id), { method: 'PATCH', body: JSON.stringify({ customer_name: name }) }); $('lead-overlay').hidden = true; showToast('Name saved', name); await showView(VIEW); }
+    catch (e) { err.textContent = e.message; save.disabled = false; }
+  };
+  save.addEventListener('click', run);
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); run(); } });
+  return el('div', {}, [el('div', { class: 'section-label', text: lead.customer_name ? 'Customer name' : 'No name saved yet' }), el('div', { class: 'lead-name-edit' }, [input, save]), err]);
+});
+
 // Lead window: archive (hide, keep everything) or delete (permanent, administrators only).
 LEAD_DETAIL_SECTIONS.push((lead) => {
   const done = async (title, msg) => { $('lead-overlay').hidden = true; showToast(title, msg); await showView(VIEW); };
